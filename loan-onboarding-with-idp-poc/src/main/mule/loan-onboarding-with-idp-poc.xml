@@ -54,8 +54,7 @@ http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/sc
     <http:request-config name="Nutrient_HTTP_Config" doc:name="HTTP Request configuration">
         <http:request-connection protocol="HTTPS" host="api.nutrient.io" />
     </http:request-config>
-
-    <secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="0cfa52cf-e11c-4d1c-bd3c-8f05fa97eafc" file="secure.yaml" key="${encryption.key}" />
+	<secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="86e742b4-b63c-43dd-94ea-c0aa1f284a11" file="secure.yaml" key="${encryption.key}" />
 	<flow name="loan-onboarding-trigger-flow">
         <email:listener-imap doc:name="On New Email - LoanBrokerIDP@gmail.com" config-ref="Email_IMAP">
             <scheduling-strategy>
