@@ -1,0 +1,15 @@
+gmail:
+  username: "![OqjK+yeKLfXhOM8BJAmBqKdDcaCf8Be1Adzit20D5jU=]"
+  password: "![SbGto5zEADhNwGtnozIpumE0//wtHKIaKb1Vog7LWmU=]"
+
+salesforce:
+  username: "![4WUoeYzqqq7XnKa4dsBAuSMxX2tE77tKbNHyJce+IvBmGBVHMbh862SVwEo7pA/Z]"
+  password: "![am7NzCwhcCO8mTHf4aNUOw==]"
+  securityToken: "![vhXfs2pBFD34AgYnLGFoV/i7y/Zh49cndBVXHSXSSio=]"
+
+idp:
+  clientId: "![By/EfZ+CK+YLMvGYZfyook/N2C96wapgccAzPmWCkIkGy33xJvBzmPqvrDeXzfNq]"
+  clientSecret: "![lAEx972q1j8zbWOZcITLG4b0ZQhbH7Qwv/ZgknAVbDHpeAY7Ow1+AqYrzbJzYHTR]"
+
+nutrient:
+  token: "![Lz4cTmpPsdf2BNPt3XpWDH18EvsE9DRuE03S3lbhv0HcAsVjOlztiqZ41IJ+onNt0D5Rky8FRgDo+7znU1hyOw==]"

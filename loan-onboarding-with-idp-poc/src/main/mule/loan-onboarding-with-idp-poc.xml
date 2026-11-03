@@ -1,0 +1,597 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:idp-idp-poc-loan-documents-130="http://www.mulesoft.org/schema/mule/idp-idp-poc-loan-documents-130"
+	xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:email="http://www.mulesoft.org/schema/mule/email"
+	xmlns:tls="http://www.mulesoft.org/schema/mule/tls"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/email http://www.mulesoft.org/schema/mule/email/current/mule-email.xsd 
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+http://www.mulesoft.org/schema/mule/idp-idp-poc-loan-documents-130 http://www.mulesoft.org/schema/mule/idp-idp-poc-loan-documents-130/current/mule-idp-idp-poc-loan-documents-130.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+
+    <email:imap-config name="Email_IMAP" doc:name="Email IMAP">
+        <email:imaps-connection host="imap.gmail.com" user="${secure::gmail.username}" password="${secure::gmail.password}">
+            <tls:context>
+				<tls:trust-store insecure="false" />
+            </tls:context>
+        </email:imaps-connection>
+    </email:imap-config>
+
+    <salesforce:sfdc-config name="Salesforce_Config" doc:name="Salesforce Config">
+        <salesforce:basic-connection
+			username="${secure::salesforce.username}"
+			password="${secure::salesforce.password}" securityToken="${secure::salesforce.securityToken}"
+			url="https://login.salesforce.com/services/Soap/u/64.0"
+			connectionTimeout="30000" connectionTimeoutUnit="MILLISECONDS"
+			loginRequestTimeout="30000" loginRequestTimeoutUnit="MILLISECONDS" />
+    </salesforce:sfdc-config>
+
+    <email:smtp-config name="Email_SMTP" doc:name="Email SMTP">
+        <email:smtps-connection host="smtp.gmail.com" user="${secure::gmail.username}" password="${secure::gmail.password}">
+            <tls:context>
+            <tls:trust-store insecure="false" />
+            </tls:context>
+        </email:smtps-connection>
+    </email:smtp-config>
+
+    <idp-idp-poc-loan-documents-130:config
+		name="IDP___idp_poc_loan_documents___1_3_0_Config"
+		doc:name="IDP - idp-poc-loan-documents - 1.3.0 Config"
+		property_host="idp-rt.us-east-1.anypoint.mulesoft.com"
+		property_port="443" property_protocol="HTTPS"
+		property_responseTimeout="30000"
+		property_client-id="${secure::idp.clientId}"
+		property_client-secret="${secure::idp.clientSecret}" />
+
+    <http:request-config name="Nutrient_HTTP_Config" doc:name="HTTP Request configuration">
+        <http:request-connection protocol="HTTPS" host="api.nutrient.io" />
+    </http:request-config>
+
+    <secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="0cfa52cf-e11c-4d1c-bd3c-8f05fa97eafc" file="secure.yaml" key="${encryption.key}" />
+	<flow name="loan-onboarding-trigger-flow">
+        <email:listener-imap doc:name="On New Email - LoanBrokerIDP@gmail.com" config-ref="Email_IMAP">
+            <scheduling-strategy>
+                <fixed-frequency frequency="30" timeUnit="SECONDS" />
+            </scheduling-strategy>
+        </email:listener-imap>
+        <set-variable
+    variableName="correlationId"
+    value="#[uuid()]"
+    doc:name="Generate Correlation ID"/>
+
+        <set-variable
+			value="#[%dw 2.0&#10;output application/java&#10;---&#10;(attributes.fromAddresses[0] scan /&lt;([^&gt;]+)&gt;/)[0][1]]"
+			doc:name="Set Broker Email" variableName="brokerEmail" />
+
+        <logger level="INFO"
+			message="#['Loan application email received. Correlation ID: ' ++ vars.correlationId ++ '. Attachment count: ' ++ sizeOf(payload.attachments)]"
+			doc:name="Logging Mail Subject And Attachment Size" />
+
+        <choice doc:name="Whether It's A Loan Application Mail Or Not">
+            <when expression='#[(attributes.subject contains "Loan Application") and sizeOf(payload.attachments) == 3]'>
+            <scatter-gather doc:name="Acknowledge And Process In Parallel">
+
+        <route>
+            <try doc:name="Try Send Acknowledgement Email">
+                <ee:transform doc:name="Build Acknowledgement Email Body">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var brandColor = "#071232"
+var brandWhite = "#f2f4f7"
+var logoUrl = "https://i.imgur.com/ZOSxaOn.png"
+var brokerName = "John"
+---
+"<!DOCTYPE html><html><body style='margin:0;padding:0;background-color:#f4f5f7;font-family:Arial,Helvetica,sans-serif;'>" ++
+"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background-color:#f4f5f7;padding:30px 0;'>" ++
+"<tr><td align='center'>" ++
+"<table role='presentation' width='600' cellpadding='0' cellspacing='0' style='background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);'>" ++
+  "<tr><td style='background-color:" ++ brandColor ++ ";padding:24px 32px;'>" ++
+    "<img src='" ++ logoUrl ++ "' alt='Company Logo' width='160' height='40' style='display:block;'/>" ++
+  "</td></tr>" ++
+  "<tr><td style='padding:32px;'>" ++
+    "<p style='font-size:15px;color:#333333;margin:0 0 16px 0;'>Hello " ++ brokerName ++ ",</p>" ++
+    "<p style='font-size:15px;color:#333333;line-height:1.6;margin:0 0 24px 0;'>We've received your loan application along with the supporting documents. Our system is currently verifying and processing everything - this usually takes a few minutes.</p>" ++
+    "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background-color:#f9fafb;border-radius:6px;margin-bottom:24px;'>" ++
+      "<tr><td style='padding:20px;'>" ++
+        "<p style='font-size:13px;color:#6b7280;margin:0 0 4px 0;text-transform:uppercase;letter-spacing:0.5px;'>Status</p>" ++
+        "<p style='font-size:15px;color:#111827;margin:0;font-weight:bold;'>Received - Processing</p>" ++
+      "</td></tr>" ++
+    "</table>" ++
+    "<p style='font-size:14px;color:#333333;line-height:1.6;margin:0;'>You'll receive a separate confirmation email shortly once processing is complete. No action is needed from you right now.</p>" ++
+    "<p style='font-size:14px;color:#333333;margin:24px 0 0 0;'>Regards,<br/><strong>Loan Origination Team</strong></p>" ++
+  "</td></tr>" ++
+  "<tr><td style='background-color:#f4f5f7;padding:20px 32px;border-top:1px solid #e5e7eb;'>" ++
+    "<p style='font-size:11px;color:#9ca3af;margin:0;'>This is an automated notification. Please do not reply directly to this email if it was not expected.</p>" ++
+    "<p style='font-size:11px;color:#9ca3af;margin:8px 0 0 0;'>Your Company Name Pvt. Ltd. — Confidential</p>" ++
+  "</td></tr>" ++
+"</table>" ++
+"</td></tr>" ++
+"</table>" ++
+"</body></html>"]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+                <email:send doc:name="Send Acknowledgement Email" config-ref="Email_SMTP" fromAddress="loanbrokeridp@gmail.com" subject="We've Received Your Loan Application - Processing Now">
+                    <email:to-addresses>
+                        <email:to-address value="#[vars.brokerEmail]" />
+                    </email:to-addresses>
+                    <email:body contentType="text/html">
+                        <email:content><![CDATA[#[payload]]]></email:content>
+                    </email:body>
+                </email:send>
+
+                <error-handler>
+                    <on-error-continue type="ANY" doc:name="Don't Let Ack Failure Break Scatter-Gather">
+                        <logger level="WARN" message="#['Failed to send acknowledgement email to ' ++ (vars.brokerEmail default 'unknown') ++ ': ' ++ error.description]" />
+                    </on-error-continue>
+                </error-handler>
+            </try>
+        </route>
+            <route>
+
+                <set-variable variableName="documentResults" value="#[[]]" doc:name="Init Document Results" />
+
+                <set-variable variableName="attachmentsMap" value="#[payload.attachments]" doc:name="Capture Original Attachments Map" />
+                <foreach collection="#[keysOf(vars.attachmentsMap)]" doc:name="Process Attachments Sequentially">
+
+    <set-variable value="#[payload]" doc:name="Get Attachment Key" variableName="attachmentKey" />
+
+    <ee:transform doc:name="Extract Stream, Metadata and Base64">
+        <ee:message>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.attachmentsMap[vars.attachmentKey]]]></ee:set-payload>
+        </ee:message>
+        <ee:variables>
+            <ee:set-variable variableName="fileMetaData"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    fileName: vars.attachmentKey,
+    mimeType: (vars.attachmentsMap[vars.attachmentKey]).^mediaType as String
+}]]></ee:set-variable>
+            <ee:set-variable variableName="fileBase64"><![CDATA[%dw 2.0
+output application/java
+import * from dw::core::Binaries
+---
+toBase64(vars.attachmentsMap[vars.attachmentKey])]]></ee:set-variable>
+        </ee:variables>
+    </ee:transform>
+
+                    <ee:transform doc:name="Build IDP Multipart Request">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+import * from dw::core::Binaries
+output multipart/form-data
+---
+{
+    parts : {
+        callback : {
+            headers : { "Content-Type" : "text/plain" },
+            content : '{"noAuthUrl": "callBackURL"}'
+        },
+        file : {
+            headers : {
+                "Content-Disposition" : {
+                    "name": "file",
+                    "filename": vars.fileMetaData.fileName,
+                    "subtype": "form-data"
+                },
+                "Content-Type" : vars.fileMetaData.mimeType
+            },
+            content : fromBase64(vars.fileBase64)
+        }
+    }
+}]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+
+                    <idp-idp-poc-loan-documents-130:postdocumentactionexecution doc:name="Submit Document to IDP" config-ref="IDP___idp_poc_loan_documents___1_3_0_Config" />
+                    <logger level="INFO" doc:name="Log IDP Response" message="#['IDP document submitted successfully. Execution ID: ' ++ (payload.id default 'unknown')]" />
+
+                    <until-successful maxRetries="10" millisBetweenRetries="4000" doc:name="Poll Until IDP Execution Completes">
+                        <idp-idp-poc-loan-documents-130:getdocumentactionexecution doc:name="Get IDP Execution Result" execution-id="#[payload.id]" config-ref="IDP___idp_poc_loan_documents___1_3_0_Config" />
+                        <choice doc:name="Whether Status Is 'SUCCEEDED' Or Not">
+                            <when expression="#[payload.status == 'SUCCEEDED']">
+                                <logger level="INFO" doc:name="Log Success Response" message="#['IDP processing completed successfully. Status: ' ++ (payload.status default 'unknown')]" />
+                            </when>
+                            <otherwise>
+                                <raise-error doc:name="Raise IDP Not Ready Error" type="IDP:NOT_READY" description="Status is not success" />
+                            </otherwise>
+                        </choice>
+
+                        <set-variable value='#[read(payload.fields.documentType.value, "application/json")]' doc:name="Parse Extracted Document Fields" variableName="extractedData" />
+
+                        <choice doc:name="Route by Classified Document Type">
+                            <when expression='#[vars.extractedData.documentType == "LOAN_APPLICATION_FORM"]'>
+                                <set-variable value="#[vars.extractedData.data]" doc:name="Set Loan Application Data" variableName="loanData" />
+                            </when>
+                            <when expression='#[vars.extractedData.documentType == "DRIVING_LICENSE"]'>
+                                <set-variable value="#[vars.extractedData.data]" doc:name="Set Driving License Data" variableName="dlData" />
+                            </when>
+                            <when expression='#[vars.extractedData.documentType == "PASSPORT"]'>
+                                <set-variable value="#[vars.extractedData.data]" doc:name="Set Passport Data" variableName="passportData" />
+                            </when>
+                        </choice>
+
+                        <set-variable doc:name="Append Raw Document Result" variableName="documentResults"
+                            value='#[%dw 2.0&#10;output application/java&#10;---&#10;(vars.documentResults default []) &lt;&lt; {&#10;                                docType: vars.extractedData.documentType,&#10;                                fileName: vars.fileMetaData.fileName,&#10;                                mimeType: vars.fileMetaData.mimeType,&#10;                                base64Content: vars.fileBase64&#10;                            }]' />
+                    </until-successful>
+                </foreach>
+
+                <!-- STEP 2: cross verification -->
+                <ee:transform doc:name="Cross-Verify Identity" doc:id="28949cb9-5b44-49ad-8709-c8d56cadf947">
+                    <ee:message>
+                    </ee:message>
+                    <ee:variables>
+								<ee:set-variable variableName="verificationResult" ><![CDATA[%dw 2.0
+output application/java
+var dlName = upper(trim(vars.dlData.fullName default ""))
+var passportName = upper(trim(vars.passportData.fullName default ""))
+var formName = upper(trim(vars.loanData.name default ""))
+var nameMatch = dlName == passportName and dlName == formName
+
+var dlDob = vars.dlData.dob default ""
+var passportDob = vars.passportData.dob default ""
+var formDob = vars.loanData.dob default ""
+var dobMatch = dlDob == passportDob and dlDob == formDob
+
+var declaredIdType = upper(trim(vars.loanData.idType default ""))
+var declaredIdNumber = trim(vars.loanData.idNumber default "")
+var idNumMatch =
+    if (declaredIdType == "DRIVING LICENSE" or declaredIdType == "DL")
+        declaredIdNumber == trim(vars.dlData.licenseNumber default "")
+    else if (declaredIdType == "PASSPORT")
+        declaredIdNumber == trim(vars.passportData.passportNumber default "")
+    else
+        false
+
+var allMatch = nameMatch and dobMatch and idNumMatch
+---
+{
+    status: if (allMatch) "New" else "Needs Verification",
+    notes: if (allMatch) null else (
+        (if (not nameMatch) "Name mismatch across documents. " else "") ++
+        (if (not dobMatch) "DOB mismatch across documents. " else "") ++
+        (if (not idNumMatch) "Declared ID number (" ++ declaredIdType ++ ") does not match the corresponding document. " else "")
+    )
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+
+                <!-- STEP 3: upsert account -->
+                <ee:transform doc:name="Build Account Upsert Payload">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[
+    {
+        Name: trim(vars.passportData.fullName default vars.dlData.fullName),
+        Date_of_Birth__c: (vars.passportData.dob default vars.dlData.dob) as Date {format: "yyyy-MM-dd"},
+        Gender__c: trim(vars.passportData.sex default ""),
+        Nationality__c: trim(vars.passportData.nationality default vars.dlData.nationality default ""),
+        Phone: trim(vars.loanData.mobile default ""),
+        Email__c: trim(vars.loanData.email default ""),
+        BillingStreet: trim(vars.dlData.address default ""),
+        Passport_Number__c: trim(vars.passportData.passportNumber default ""),
+        Driving_Licence_Number__c: trim(vars.dlData.licenseNumber default "")
+    }
+]]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+                <salesforce:upsert doc:name="Upsert Account" config-ref="Salesforce_Config" objectType="Account" externalIdFieldName="Email__c" />
+                <logger level="INFO" doc:name="Log Account Upsert Response" message="#['Salesforce Account upsert completed successfully. Account ID: ' ++ (payload.items[0].id default 'unknown')]" />
+
+                <!-- capture accountId NOW, before payload changes again in the redaction loop -->
+                <set-variable variableName="accountId" value="#[payload.items[0].id]" doc:name="Store Account Id" />
+
+                <!-- STEP 4: prepare PII-redacted attachments -->
+                <set-variable variableName="documentAttachments" value="#[[]]" doc:name="Init Redacted Document Attachments" />
+                <foreach collection="#[vars.documentResults]" doc:name="Redact Each Document">
+                    <set-variable variableName="currentDocType" value="#[payload.docType]" doc:name="Store Current DocType" />
+                    <set-variable variableName="fileMetaData" value="#[{ fileName: payload.fileName, mimeType: payload.mimeType }]" doc:name="Store Current File MetaData" />
+                    <set-variable variableName="fileBase64" value="#[payload.base64Content]" doc:name="Store Current File Base64" />
+
+                    <flow-ref name="redact-document" doc:name="Redact PII From Document" />
+
+                    <set-variable doc:name="Append Redacted Document" variableName="documentAttachments"
+                        value='#[%dw 2.0&#10;output application/java&#10;import * from dw::core::Binaries&#10;---&#10;(vars.documentAttachments default []) &lt;&lt; {&#10;    docType: vars.currentDocType,&#10;    fileName: (((vars.fileMetaData.fileName scan /^(.+)\.[^.\s]+$/)[0][1] default vars.fileMetaData.fileName) ++ ".pdf"),&#10;    base64Content: toBase64(payload)&#10;}]' />
+                </foreach>
+
+                <!-- STEP 5: upsert application -->
+                <ee:transform doc:name="Build Loan Application Payload">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var tenureMonths = (vars.loanData.tenure scan /\d+/)[0][0] as Number
+var loanAmount = vars.loanData.loanAmount as Number
+---
+[{
+    Applicant__c: vars.accountId,
+    Loan_Type__c: vars.loanData.loanType,
+    Loan_Amount__c: loanAmount,
+    Tenure_Months__c: tenureMonths,
+    Broker_Email__c: vars.brokerEmail default null,
+    purpose__c: vars.loanData.purpose,
+    Status__c: vars.verificationResult.status default "New",
+    Verification_Notes__c: vars.verificationResult.notes default null,
+    Declared_ID_Type__c: trim(vars.loanData.idType default ""),
+    Declared_ID_Number__c: trim(vars.loanData.idNumber default "")
+}]]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+                <salesforce:create type="Loan_Application__c" doc:name="Create Loan Application" config-ref="Salesforce_Config" target="loanApplication" />
+
+                <!-- STEP 6: upsert (upload) attachments to the application -->
+                <salesforce:create doc:name="Upload Documents to Loan Application" type="ContentVersion" config-ref="Salesforce_Config">
+                    <salesforce:records><![CDATA[#[vars.documentAttachments map ((doc) -> {
+                        Title: doc.fileName,
+                        PathOnClient: doc.fileName,
+                        VersionData: doc.base64Content,
+                        FirstPublishLocationId: vars.loanApplication.items[0].id
+                    })]]]></salesforce:records>
+                </salesforce:create>
+                <logger level="INFO" doc:name="Log Document Upload Response" message="Salesforce document upload completed successfully." />
+
+               <!-- STEP 7: send separate emails to broker and applicant -->
+<scatter-gather doc:name="Send Broker And Applicant Emails">
+
+    <route>
+        <try doc:name="Try Send Broker Confirmation Email">
+            <ee:transform doc:name="Build Broker Confirmation Email Body">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var brandColor = "#071232"
+var brandWhite = "#f2f4f7"
+var logoUrl = "https://i.imgur.com/ZOSxaOn.png"
+var brokerName = "John"
+var orgDomain = "orgfarm-9effe9a34e-dev-ed.develop"
+var applicantName = vars.loanData.name default ""
+var accId = vars.accountId default ""
+var loanAppId = vars.loanApplication.items[0].id default ""
+var status = vars.verificationResult.status default "New"
+---
+"<!DOCTYPE html><html><body style='margin:0;padding:0;background-color:#f4f5f7;font-family:Arial,Helvetica,sans-serif;'>" ++
+"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background-color:#f4f5f7;padding:30px 0;'>" ++
+"<tr><td align='center'>" ++
+"<table role='presentation' width='600' cellpadding='0' cellspacing='0' style='background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);'>" ++
+  "<tr><td style='background-color:" ++ brandColor ++ ";padding:24px 32px;'>" ++
+    "<img src='" ++ logoUrl ++ "' alt='Company Logo' width='160' height='40' style='display:block;'/>" ++
+  "</td></tr>" ++
+  "<tr><td style='padding:32px;'>" ++
+    "<p style='font-size:15px;color:#333333;margin:0 0 16px 0;'>Hi " ++ brokerName ++ ",</p>" ++
+    "<p style='font-size:15px;color:#333333;line-height:1.6;margin:0 0 24px 0;'>The loan application for <strong>" ++ applicantName ++ "</strong> has been processed and the records are now available in the Loan Management System.</p>" ++
+    "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background-color:#f9fafb;border-radius:6px;margin-bottom:24px;'>" ++
+      "<tr><td style='padding:20px;'>" ++
+        "<p style='font-size:13px;color:#6b7280;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:0.5px;'>Status</p>" ++
+        "<p style='font-size:15px;color:#111827;margin:0 0 20px 0;font-weight:bold;'>" ++ status ++ "</p>" ++
+        "<a href='https://" ++ orgDomain ++ ".lightning.force.com/lightning/r/Account/" ++ accId ++ "/view' style='display:inline-block;background-color:" ++ brandColor ++ ";color:" ++ brandWhite ++ ";text-decoration:none;padding:10px 20px;border-radius:4px;font-size:14px;margin-bottom:12px;margin-right:8px;'>View Account</a>" ++
+        "<a href='https://" ++ orgDomain ++ ".lightning.force.com/lightning/r/Loan_Application__c/" ++ loanAppId ++ "/view' style='display:inline-block;background-color:" ++ brandColor ++ ";color:" ++ brandWhite ++ ";text-decoration:none;padding:10px 20px;border-radius:4px;font-size:14px;'>View Loan Application</a>" ++
+      "</td></tr>" ++
+    "</table>" ++
+    "<p style='font-size:14px;color:#333333;line-height:1.6;margin:0;'>Open the record in the Loan Management System for full verification notes and the submitted documents.</p>" ++
+    "<p style='font-size:14px;color:#333333;margin:24px 0 0 0;'>Regards,<br/><strong>Loan Origination Team</strong></p>" ++
+  "</td></tr>" ++
+  "<tr><td style='background-color:#f4f5f7;padding:20px 32px;border-top:1px solid #e5e7eb;'>" ++
+    "<p style='font-size:11px;color:#9ca3af;margin:0;'>This is an automated notification.</p>" ++
+    "<p style='font-size:11px;color:#9ca3af;margin:8px 0 0 0;'>Your Company Name Pvt. Ltd. — Confidential</p>" ++
+  "</td></tr>" ++
+"</table>" ++
+"</td></tr>" ++
+"</table>" ++
+"</body></html>"]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+
+            <email:send doc:name="Send Broker Confirmation Email" config-ref="Email_SMTP" fromAddress="loanbrokeridp@gmail.com" subject='#["Loan Application Processed - " ++ vars.loanData.name]'>
+                <email:to-addresses>
+                    <email:to-address value="#[vars.brokerEmail]" />
+                </email:to-addresses>
+                <email:body contentType="text/html">
+                    <email:content><![CDATA[#[payload]]]></email:content>
+                </email:body>
+            </email:send>
+
+            <error-handler>
+                <on-error-continue type="ANY" doc:name="Log Broker Email Failure">
+                    <logger level="WARN" message="#['Failed to send broker confirmation email to ' ++ (vars.brokerEmail default 'unknown') ++ ': ' ++ error.description]" />
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </route>
+
+    <route>
+        <try doc:name="Try Send Applicant Summary Email">
+            <ee:transform doc:name="Build Applicant Summary Email Body">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var brandColor = "#071232"
+var brandWhite = "#f2f4f7"
+var logoUrl = "https://i.imgur.com/ZOSxaOn.png"
+var applicantName = vars.loanData.name default ""
+var status = vars.verificationResult.status default "New"
+var loanType = vars.loanData.loanType default ""
+var loanAmount = vars.loanData.loanAmount default ""
+var tenure = vars.loanData.tenure default ""
+var purpose = vars.loanData.purpose default ""
+---
+"<!DOCTYPE html><html><body style='margin:0;padding:0;background-color:#f4f5f7;font-family:Arial,Helvetica,sans-serif;'>" ++
+"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background-color:#f4f5f7;padding:30px 0;'>" ++
+"<tr><td align='center'>" ++
+"<table role='presentation' width='600' cellpadding='0' cellspacing='0' style='background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);'>" ++
+  "<tr><td style='background-color:" ++ brandColor ++ ";padding:24px 32px;'>" ++
+    "<img src='" ++ logoUrl ++ "' alt='Company Logo' width='160' height='40' style='display:block;'/>" ++
+  "</td></tr>" ++
+  "<tr><td style='padding:32px;'>" ++
+    "<p style='font-size:15px;color:#333333;margin:0 0 16px 0;'>Dear " ++ applicantName ++ ",</p>" ++
+    "<p style='font-size:15px;color:#333333;line-height:1.6;margin:0 0 24px 0;'>Your loan application has been successfully submitted. Here's a summary of the details we have on file:</p>" ++
+    "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background-color:#f9fafb;border-radius:6px;margin-bottom:24px;'>" ++
+      "<tr><td style='padding:20px;'>" ++
+        "<p style='font-size:13px;color:#6b7280;margin:0 0 4px 0;text-transform:uppercase;letter-spacing:0.5px;'>Loan Type</p>" ++
+        "<p style='font-size:15px;color:#111827;margin:0 0 16px 0;font-weight:bold;'>" ++ loanType ++ "</p>" ++
+        "<p style='font-size:13px;color:#6b7280;margin:0 0 4px 0;text-transform:uppercase;letter-spacing:0.5px;'>Loan Amount</p>" ++
+        "<p style='font-size:15px;color:#111827;margin:0 0 16px 0;font-weight:bold;'>" ++ loanAmount ++ "</p>" ++
+        "<p style='font-size:13px;color:#6b7280;margin:0 0 4px 0;text-transform:uppercase;letter-spacing:0.5px;'>Tenure</p>" ++
+        "<p style='font-size:15px;color:#111827;margin:0 0 16px 0;font-weight:bold;'>" ++ tenure ++ "</p>" ++
+        "<p style='font-size:13px;color:#6b7280;margin:0 0 4px 0;text-transform:uppercase;letter-spacing:0.5px;'>Purpose</p>" ++
+        "<p style='font-size:15px;color:#111827;margin:0 0 16px 0;font-weight:bold;'>" ++ purpose ++ "</p>" ++
+        "<p style='font-size:13px;color:#6b7280;margin:0 0 4px 0;text-transform:uppercase;letter-spacing:0.5px;'>Status</p>" ++
+        "<p style='font-size:15px;color:#111827;margin:0;font-weight:bold;'>" ++ status ++ "</p>" ++
+      "</td></tr>" ++
+    "</table>" ++
+    "<p style='font-size:14px;color:#333333;line-height:1.6;margin:0;'>Your assigned loan officer will be in touch with next steps. If you have any questions, feel free to reply to this email.</p>" ++
+    "<p style='font-size:14px;color:#333333;margin:24px 0 0 0;'>Regards,<br/><strong>Loan Origination Team</strong></p>" ++
+  "</td></tr>" ++
+  "<tr><td style='background-color:#f4f5f7;padding:20px 32px;border-top:1px solid #e5e7eb;'>" ++
+    "<p style='font-size:11px;color:#9ca3af;margin:0;'>This is an automated notification. Please do not reply directly to this email if it was not expected.</p>" ++
+    "<p style='font-size:11px;color:#9ca3af;margin:8px 0 0 0;'>Your Company Name Pvt. Ltd. — Confidential</p>" ++
+  "</td></tr>" ++
+"</table>" ++
+"</td></tr>" ++
+"</table>" ++
+"</body></html>"]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+
+            <email:send doc:name="Send Applicant Summary Email" config-ref="Email_SMTP" fromAddress="loanbrokeridp@gmail.com" subject="Your Loan Application Summary">
+                <email:to-addresses>
+                    <email:to-address value="#[vars.loanData.email]" />
+                </email:to-addresses>
+                <email:body contentType="text/html">
+                    <email:content><![CDATA[#[payload]]]></email:content>
+                </email:body>
+            </email:send>
+
+            <error-handler>
+                <on-error-continue type="ANY" doc:name="Log Applicant Email Failure">
+                    <logger level="WARN" message="#['Failed to send applicant summary email to ' ++ (vars.loanData.email default 'unknown') ++ ': ' ++ error.description]" />
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </route>
+
+</scatter-gather>
+<logger
+    level="INFO"
+    doc:name="Log Notification Stage Completed"
+    message="#['Loan onboarding processing completed. Notification stage finished. Correlation ID: '&#10;        ++ (vars.correlationId default 'unknown')]"/>
+				</route>
+				</scatter-gather>
+            </when>
+            
+            <otherwise>
+                <logger level="INFO" doc:name="Log Skipped Non-Loan Email" message="This is not a loan application mail" />
+            </otherwise>
+        </choice>
+        
+        <error-handler>
+    <on-error-propagate
+        type="ANY"
+        doc:name="Log And Propagate Processing Error">
+
+        <logger
+            level="ERROR"
+            doc:name="Log Loan Processing Error"
+            message="#['Loan processing failed. Correlation ID: '&#10;                ++ (vars.correlationId default 'unknown')&#10;                ++ ' | Error Type: '&#10;                ++ (error.errorType.identifier default 'UNKNOWN')&#10;                ++ ' | Description: '&#10;                ++ (error.description default 'No description')]"/>
+
+    </on-error-propagate>
+</error-handler>
+    </flow>
+<sub-flow name="redact-document">
+
+    <!-- Work out exactly which leading characters of the ID number to redact, keeping the last 4 visible -->
+    <set-variable variableName="idNumberToMask" doc:name="Compute ID Portion To Redact" value='#[%dw 2.0&#10;output application/java&#10;var rawId =&#10;    if (vars.currentDocType == "DRIVING_LICENSE") (vars.dlData.licenseNumber default "")&#10;    else if (vars.currentDocType == "PASSPORT") (vars.passportData.passportNumber default "")&#10;    else if (vars.currentDocType == "LOAN_APPLICATION_FORM") (vars.loanData.idNumber default "")&#10;    else ""&#10;var keepLength = 4&#10;var maskLength = sizeOf(rawId) - keepLength&#10;---&#10;if (maskLength &gt; 0) rawId[0 to (maskLength - 1)] else ""]' />
+
+    <!--
+        Single call to Nutrient's ONLY endpoint: POST /build.
+        /build auto-converts whatever format is attached (image or PDF) as it
+        assembles the output, so there is no need to branch or pre-convert
+        images separately - the same request works for both DL/passport
+        photos (image/*) and the loan application form (application/pdf).
+
+        Actions:
+          1. ocr        - required so text on image-based documents (the
+                           photographed DL/passport) becomes searchable text
+                           that createRedactions can match. Harmless to run
+                           on an already-text PDF too.
+          2. createRedactions (only added if an ID number was found) - masks
+                           every character of idNumberToMask (i.e. everything
+                           except the last 4 digits, computed above).
+          3. applyRedactions  - permanently burns in the redaction.
+    -->
+    <ee:transform doc:name="Build Redaction Request For /build">
+        <ee:message>
+            <ee:set-payload><![CDATA[%dw 2.0
+import * from dw::core::Binaries
+output multipart/form-data
+var idMask = vars.idNumberToMask default ""
+var baseActions = [{ 'type': "ocr", language: "english" }]
+var redactActions = if (idMask != "") [
+    {
+        'type': "createRedactions",
+        strategy: "text",
+        strategyOptions: {
+            text: idMask,
+            includeAnnotations: true,
+            caseSensitive: false
+        }
+    },
+    { 'type': "applyRedactions" }
+] else []
+---
+{
+    parts: {
+        instructions: {
+            headers: { "Content-Type": "application/json" },
+            content: {
+                parts: [ { file: "document" } ],
+                actions: baseActions ++ redactActions
+            }
+        },
+        document: {
+            headers: {
+                "Content-Disposition": { name: "document", filename: vars.fileMetaData.fileName },
+                "Content-Type": vars.fileMetaData.mimeType
+            },
+            content: fromBase64(vars.fileBase64)
+        }
+    }
+}]]></ee:set-payload>
+        </ee:message>
+    </ee:transform>
+
+    <try doc:name="Try">
+        <http:request method="POST" path="/build" config-ref="Nutrient_HTTP_Config" doc:name="Redact ID Number (Keep Last 4) via /build">
+            <http:headers><![CDATA[#[output application/java
+---
+{
+	"Authorization" : "Bearer ${secure::nutrient.token}"
+}]]]></http:headers>
+        </http:request>
+        <error-handler>
+            <on-error-propagate type="ANY" doc:name="Log Response Body Then Rethrow">
+                <logger
+    level="ERROR"
+    doc:name="Log Nutrient Error"
+    message="#['Nutrient /build failed. Correlation ID: '&#10;        ++ (vars.correlationId default 'unknown')&#10;        ++ ' | Status: '&#10;        ++ (error.errorMessage.attributes.statusCode as String default 'unknown')&#10;        ++ ' | Description: '&#10;        ++ (error.description default 'No description')]"/>
+            </on-error-propagate>
+        </error-handler>
+    </try>
+
+    <set-payload value="#[payload]" doc:name="Store Redacted PDF" />
+
+</sub-flow>
+</mule>
